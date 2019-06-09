@@ -14,11 +14,17 @@ import Data.ByteString (ByteString)
 
 import qualified Data.ByteString.Char8 as BS
 
-newtype Hex = Hex { getHexBS :: ByteString }
+newtype Pubkey = Pubkey { getPubkeyHex :: ByteString }
     deriving (Eq, Ord)
 
-instance Show Hex where
-    show (Hex bs) = BS.unpack bs
+newtype SHA256 = SHA256 { getSHA256 :: ByteString }
+    deriving (Eq, Ord)
+
+instance Show Pubkey where
+    show (Pubkey bs) = BS.unpack bs
+
+instance Show SHA256 where
+    show (SHA256 bs) = BS.unpack bs
 
 data MiniscriptError = BadHexLen
                      deriving (Show, Eq, Ord)
@@ -29,31 +35,51 @@ describeErr BadHexLen = "bad hexadecimal length"
 type Parser a = Parsec Void Text a
 
 data Expr where
-    Pk    :: Hex  -> Expr
-    Multi :: Int  -> Hex    -> Hex -> Expr
-    Time  :: Expr -> Expr
-    Hash  :: Expr -> Expr
-    And   :: Expr -> Expr   -> Expr
-    Or    :: Expr -> Expr   -> Expr
-    Aor   :: Expr -> Expr   -> Expr
-    Thres :: Int  -> [Expr] -> Expr
+    Pk    :: Pubkey -> Expr
+    Multi :: Int    -> Pubkey -> Pubkey -> Expr
+    Time  :: Expr   -> Expr
+    Hash  :: SHA256 -> Expr
+    And   :: Expr   -> Expr   -> Expr
+    Or    :: Expr   -> Expr   -> Expr
+    Aor   :: Expr   -> Expr   -> Expr
+    Thres :: Int    -> [Expr] -> Expr
     deriving (Show, Eq, Ord)
 
-hexString :: Parser Hex
+hexString :: Parser ByteString
 hexString =
-  fmap (Hex . BS.pack . concat) pairs
+  fmap (BS.pack . concat) pairs
   where
     pairs = many ((:) <$> hexDigitChar <*> fmap (:[]) hexDigitChar)
 
-pubkeyP :: Parser Hex
+pubkeyP :: Parser Pubkey
 pubkeyP = do
-  Hex h <- hexString
+  h <- hexString
   if BS.length h /= 64
      then fail "pubkeys must be 32 bytes"
-     else return (Hex h)
+     else return (Pubkey h)
+
+sha256P :: Parser SHA256
+sha256P = do
+  h <- hexString
+  if BS.length h /= 64
+     then fail "sha256 hashes must be 32 bytes"
+     else return (SHA256 h)
+
+testSHA256P :: Parser SHA256
+testSHA256P = char 'H' $> SHA256 "8888888888888888888888888888888888888888888888888888888888888888"
+
+hashValP :: Parser SHA256
+hashValP = testSHA256P <|> sha256P
+
+hashP :: Parser Expr
+hashP = do
+  _   <- string "hash("
+  hex <- hashValP
+  _   <- char ')'
+  return (Hash hex)
 
 exprP :: Parser Expr
-exprP = pkP <|> orP
+exprP = pkP <|> orP <|> hashP
 
 orP :: Parser Expr
 orP = do
@@ -65,10 +91,10 @@ orP = do
   _  <- char ')'
   return (Or e1 e2)
 
-testKeyP :: Parser Hex
-testKeyP = char 'C' $> Hex "1212121212121212121212121212121212121212121212121212121212121212"
+testKeyP :: Parser Pubkey
+testKeyP = char 'C' $> Pubkey "1212121212121212121212121212121212121212121212121212121212121212"
 
-keyP :: Parser Hex
+keyP :: Parser Pubkey
 keyP = testKeyP <|> pubkeyP
 
 pkP :: Parser Expr
