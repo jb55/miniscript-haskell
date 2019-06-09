@@ -10,6 +10,7 @@ import Data.Functor (($>))
 import Text.Megaparsec.Char
 import Text.Megaparsec.Char.Lexer
 import Data.Text (Text)
+import Data.Functor.Identity (Identity)
 import Data.Void (Void)
 import Data.ByteString (ByteString)
 
@@ -38,7 +39,7 @@ type Parser a = Parsec Void Text a
 data Expr where
     Pk    :: Pubkey -> Expr
     Multi :: Int    -> [Pubkey] -> Expr
-    Time  :: Expr   -> Expr
+    Time  :: Int    -> Expr
     Hash  :: SHA256 -> Expr
     And   :: Expr   -> Expr   -> Expr
     Or    :: Expr   -> Expr   -> Expr
@@ -53,7 +54,7 @@ hexString =
     pairs = many ((:) <$> hexDigitChar <*> fmap (:[]) hexDigitChar)
 
 pubkeyP :: Parser Pubkey
-pubkeyP = do
+pubkeyP = desc "pubkey" $ do
   h <- hexString
   if BS.length h /= 64
      then fail "pubkeys must be 32 bytes"
@@ -73,17 +74,20 @@ hashValP :: Parser SHA256
 hashValP = testSHA256P <|> sha256P
 
 hashP :: Parser Expr
-hashP = do
+hashP = desc "hash" $ do
   _   <- string "hash("
   hex <- hashValP
   _   <- char ')'
   return (Hash hex)
 
 exprP :: Parser Expr
-exprP = pkP <|> orP <|> hashP <|> multiP
+exprP = pkP <|> andP <|> orP <|> hashP <|> timeP <|> multiP
+
+desc :: String -> ParsecT Void Text Identity a -> ParsecT Void Text Identity a
+desc = flip (<?>)
 
 orP :: Parser Expr
-orP = do
+orP = desc "or" $ do
   _  <- string "or("
   e1 <- exprP
   _  <- char ','
@@ -92,13 +96,15 @@ orP = do
   return (Or e1 e2)
 
 testKeyP :: Parser Pubkey
-testKeyP = char 'C' $> Pubkey "1212121212121212121212121212121212121212121212121212121212121212"
+testKeyP = desc "C" $
+    char 'C' $> Pubkey "1212121212121212121212121212121212121212121212121212121212121212"
+
 
 keyP :: Parser Pubkey
 keyP = testKeyP <|> pubkeyP
 
 multiP :: Parser Expr
-multiP = do
+multiP = desc "multi" $ do
   _  <- string "multi("
   n  <- decimal
   _  <- char ','
@@ -109,8 +115,24 @@ multiP = do
      then fail ("asking for " ++ show n ++ " keys to sign, but provided " ++ show nkeys)
      else return (Multi n es)
 
+timeP :: Parser Expr
+timeP = desc "time" $ do
+  _ <- string "time("
+  n <- decimal
+  _ <- char ')'
+  return (Time n)
+
+andP :: Parser Expr
+andP = desc "and" $ do
+  _  <- string "and("
+  e1 <- exprP
+  _  <- char ','
+  e2 <- exprP
+  _  <- char ')'
+  return (And e1 e2)
+
 pkP :: Parser Expr
-pkP = do
+pkP = desc "pk" $ do
   _ <- string "pk("
   h <- keyP
   _ <- char ')'
