@@ -14,6 +14,8 @@ import Data.Functor.Identity (Identity)
 import Data.Void (Void)
 import Data.ByteString (ByteString)
 
+import qualified Data.Text as T
+
 import qualified Data.ByteString.Char8 as BS
 
 newtype Pubkey = Pubkey { getPubkeyHex :: ByteString }
@@ -28,11 +30,10 @@ instance Show Pubkey where
 instance Show SHA256 where
     show (SHA256 bs) = BS.unpack bs
 
-data MiniscriptError = BadHexLen
-                     deriving (Show, Eq, Ord)
-
-describeErr :: MiniscriptError -> String
-describeErr BadHexLen = "bad hexadecimal length"
+infixr 5 ?:
+(?:) :: Maybe a -> [a] -> [a]
+Just x  ?: xs = x : xs
+Nothing ?: xs = xs
 
 type Parser a = Parsec Void Text a
 
@@ -53,19 +54,18 @@ hexString =
   where
     pairs = many ((:) <$> hexDigitChar <*> fmap (:[]) hexDigitChar)
 
-pubkeyP :: Parser Pubkey
-pubkeyP = desc "pubkey" $ do
+hexP :: String -> (ByteString -> a) -> Parser a
+hexP name make = do
   h <- hexString
   if BS.length h /= 64
-     then fail "pubkeys must be 32 bytes"
-     else return (Pubkey h)
+     then fail (name ++ " must be 32 bytes")
+     else return (make h)
 
 sha256P :: Parser SHA256
-sha256P = do
-  h <- hexString
-  if BS.length h /= 64
-     then fail "sha256 hashes must be 32 bytes"
-     else return (SHA256 h)
+sha256P = hexP "sha256" SHA256
+
+pubkeyP :: Parser Pubkey
+pubkeyP = hexP "pubkey" Pubkey
 
 testSHA256P :: Parser SHA256
 testSHA256P = char 'H' $> SHA256 "8888888888888888888888888888888888888888888888888888888888888888"
@@ -73,32 +73,29 @@ testSHA256P = char 'H' $> SHA256 "8888888888888888888888888888888888888888888888
 hashValP :: Parser SHA256
 hashValP = testSHA256P <|> sha256P
 
-hashP :: Parser Expr
-hashP = desc "hash" $ do
-  _   <- string "hash("
-  hex <- hashValP
-  _   <- char ')'
-  return (Hash hex)
-
 exprP :: Parser Expr
 exprP = pkP <|> andP <|> orP <|> hashP <|> timeP <|> multiP
 
 desc :: String -> ParsecT Void Text Identity a -> ParsecT Void Text Identity a
 desc = flip (<?>)
 
-orP :: Parser Expr
-orP = desc "or" $ do
-  _  <- string "or("
+binP :: Text -> (Expr -> Expr -> Expr) -> Parser Expr
+binP name make = desc (T.unpack name) $ do
+  _  <- string name
   e1 <- exprP
   _  <- char ','
   e2 <- exprP
   _  <- char ')'
-  return (Or e1 e2)
+  return (make e1 e2)
+
+andP, orP, aorP :: Parser Expr
+andP = binP "and" And
+orP  = binP "or" Or
+aorP = binP "aor" Aor
 
 testKeyP :: Parser Pubkey
 testKeyP = desc "C" $
     char 'C' $> Pubkey "1212121212121212121212121212121212121212121212121212121212121212"
-
 
 keyP :: Parser Pubkey
 keyP = testKeyP <|> pubkeyP
@@ -115,28 +112,18 @@ multiP = desc "multi" $ do
      then fail ("asking for " ++ show n ++ " keys to sign, but provided " ++ show nkeys)
      else return (Multi n es)
 
-timeP :: Parser Expr
-timeP = desc "time" $ do
-  _ <- string "time("
-  n <- decimal
+unaryP :: Text -> Parser a -> (a -> Expr) -> Parser Expr
+unaryP name body make = desc (T.unpack name) $ do
+  _ <- string name
+  _ <- char '('
+  n <- body
   _ <- char ')'
-  return (Time n)
+  return (make n)
 
-andP :: Parser Expr
-andP = desc "and" $ do
-  _  <- string "and("
-  e1 <- exprP
-  _  <- char ','
-  e2 <- exprP
-  _  <- char ')'
-  return (And e1 e2)
-
-pkP :: Parser Expr
-pkP = desc "pk" $ do
-  _ <- string "pk("
-  h <- keyP
-  _ <- char ')'
-  return (Pk h)
+timeP, pkP, hashP :: Parser Expr
+timeP = unaryP "time" decimal  Time
+pkP   = unaryP "pk"   keyP     Pk
+hashP = unaryP "hash" hashValP Hash
 
 main :: IO ()
-main = print $ parse pkP "" "pk(C)"
+main = print (parse pkP "" "pk(C)")
