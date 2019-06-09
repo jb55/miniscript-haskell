@@ -88,10 +88,21 @@ binP name make = desc (T.unpack name) $ do
   _  <- char ')'
   return (make e1 e2)
 
-andP, orP, aorP :: Parser Expr
-andP = binP "and" And
-orP  = binP "or" Or
-aorP = binP "aor" Aor
+unaryP :: Text -> Parser a -> (a -> Expr) -> Parser Expr
+unaryP name body make = desc (T.unpack name) $ do
+  _ <- string name
+  _ <- char '('
+  n <- body
+  _ <- char ')'
+  return (make n)
+
+andP, orP, aorP, timeP, pkP, hashP :: Parser Expr
+andP  = binP   "and"  And
+orP   = binP   "or"   Or
+aorP  = binP   "aor"  Aor
+timeP = unaryP "time" decimal  Time
+pkP   = unaryP "pk"   keyP     Pk
+hashP = unaryP "hash" hashValP Hash
 
 testKeyP :: Parser Pubkey
 testKeyP = desc "C" $
@@ -111,19 +122,6 @@ multiP = desc "multi" $ do
   if n == 0 || n > nkeys
      then fail ("asking for " ++ show n ++ " keys to sign, but provided " ++ show nkeys)
      else return (Multi n es)
-
-unaryP :: Text -> Parser a -> (a -> Expr) -> Parser Expr
-unaryP name body make = desc (T.unpack name) $ do
-  _ <- string name
-  _ <- char '('
-  n <- body
-  _ <- char ')'
-  return (make n)
-
-timeP, pkP, hashP :: Parser Expr
-timeP = unaryP "time" decimal  Time
-pkP   = unaryP "pk"   keyP     Pk
-hashP = unaryP "hash" hashValP Hash
 
 main :: IO ()
 main = print (parse pkP "" "pk(C)")
