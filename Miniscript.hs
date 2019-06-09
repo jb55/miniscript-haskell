@@ -8,6 +8,7 @@ module Main where
 import Text.Megaparsec
 import Data.Functor (($>))
 import Text.Megaparsec.Char
+import Text.Megaparsec.Char.Lexer
 import Data.Text (Text)
 import Data.Void (Void)
 import Data.ByteString (ByteString)
@@ -36,7 +37,7 @@ type Parser a = Parsec Void Text a
 
 data Expr where
     Pk    :: Pubkey -> Expr
-    Multi :: Int    -> Pubkey -> Pubkey -> Expr
+    Multi :: Int    -> [Pubkey] -> Expr
     Time  :: Expr   -> Expr
     Hash  :: SHA256 -> Expr
     And   :: Expr   -> Expr   -> Expr
@@ -79,12 +80,11 @@ hashP = do
   return (Hash hex)
 
 exprP :: Parser Expr
-exprP = pkP <|> orP <|> hashP
+exprP = pkP <|> orP <|> hashP <|> multiP
 
 orP :: Parser Expr
 orP = do
-  _  <- string "or"
-  _  <- char '('
+  _  <- string "or("
   e1 <- exprP
   _  <- char ','
   e2 <- exprP
@@ -96,6 +96,18 @@ testKeyP = char 'C' $> Pubkey "1212121212121212121212121212121212121212121212121
 
 keyP :: Parser Pubkey
 keyP = testKeyP <|> pubkeyP
+
+multiP :: Parser Expr
+multiP = do
+  _  <- string "multi("
+  n  <- decimal
+  _  <- char ','
+  es <- keyP `sepBy` char ','
+  _  <- char ')'
+  let nkeys = length es
+  if n == 0 || n > nkeys
+     then fail ("asking for " ++ show n ++ " keys to sign, but provided " ++ show nkeys)
+     else return (Multi n es)
 
 pkP :: Parser Expr
 pkP = do
