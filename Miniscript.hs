@@ -45,18 +45,31 @@ hexString =
   where
     pairs = many ((:) <$> hexDigitChar <*> fmap (:[]) hexDigitChar)
 
-pubkey :: Parser Hex
-pubkey = do
+pubkeyP :: Parser Hex
+pubkeyP = do
   Hex h <- hexString
   if BS.length h /= 64
      then fail "pubkeys must be 32 bytes"
      else return (Hex h)
 
-testKey :: Parser Hex
-testKey = char 'C' $> Hex "1212121212121212121212121212121212121212121212121212121212121212"
+exprP :: Parser Expr
+exprP = pkP <|> orP
+
+orP :: Parser Expr
+orP = do
+  _  <- string "or"
+  _  <- char '('
+  e1 <- exprP
+  _  <- char ','
+  e2 <- exprP
+  _  <- char ')'
+  return (Or e1 e2)
+
+testKeyP :: Parser Hex
+testKeyP = char 'C' $> Hex "1212121212121212121212121212121212121212121212121212121212121212"
 
 keyP :: Parser Hex
-keyP = testKey <|> pubkey
+keyP = testKeyP <|> pubkeyP
 
 pkP :: Parser Expr
 pkP = do
